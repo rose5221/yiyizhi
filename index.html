@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="robots" content="noindex, nofollow">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>一页纸 · 每天过一遍</title>
+<link rel="stylesheet" href="style.css?v=197e06f4">
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-mark">一页纸</span>
+    <span class="brand-sub">知识点手册 · 100 点</span>
+  </div>
+
+  <div class="topmid">
+    <div class="clock" id="clock">
+      <span class="clock-main" id="clockMain">00:00</span>
+      <span class="clock-label" id="clockLabel">已用 / 60 分钟</span>
+    </div>
+    <div class="bar" id="bar"><i id="barFill"></i><b id="barTip"></b></div>
+    <div class="pace" id="pace">准备开始</div>
+  </div>
+
+  <div class="topright">
+    <button class="streak" id="streakBtn" title="连续天数">🔥 <span id="streakNum">0</span> 天</button>
+    <button class="icon-btn" id="btnSettings" title="设置">⚙</button>
+  </div>
+</header>
+
+<nav class="tabs">
+  <div class="segmented" id="modeTabs">
+    <button data-mode="read" class="on">顺序过</button>
+    <button data-mode="recall">遮色自测</button>
+    <button data-mode="index">目录</button>
+  </div>
+
+  <div class="filters">
+    <div class="chips" id="modChips">
+      <button data-mod="" class="on">全部</button>
+      <button data-mod="马原">马原</button>
+      <button data-mod="史纲">史纲</button>
+      <button data-mod="其他">其他</button>
+    </div>
+    <label class="search">
+      <input id="q" type="search" placeholder="搜标题 / 正文…" autocomplete="off">
+    </label>
+    <button class="icon-btn" id="btnWeak" title="只看没记牢的">⚑</button>
+  </div>
+</nav>
+
+<main id="view"></main>
+
+<div class="hint" id="hint"></div>
+
+<div class="sheet" id="sheet" hidden>
+  <div class="sheet-card">
+    <h3>今天的节奏</h3>
+    <div class="field">
+      <label>时间预算</label>
+      <div class="chips" id="budgetChips">
+        <button data-min="45">45 分钟</button>
+        <button data-min="60" class="on">60 分钟</button>
+        <button data-min="75">75 分钟</button>
+        <button data-min="90">90 分钟</button>
+      </div>
+    </div>
+    <div class="field">
+      <label>正文字号 <b id="sizeVal">17</b></label>
+      <input type="range" id="sizeRange" min="14" max="24" step="1" value="17">
+    </div>
+    <div class="field">
+      <label>遮色强度 <b id="blurVal">5</b></label>
+      <input type="range" id="blurRange" min="2" max="12" step="1" value="5">
+    </div>
+    <div class="field">
+      <label class="switchline">
+        <input type="checkbox" id="hardBlur">
+        <span>遮盖成色块（更狠，看不到字数）</span>
+      </label>
+    </div>
+    <div class="sheet-foot">
+      <button class="ghost" id="btnReset">清空进度</button>
+      <button class="primary" id="btnCloseSheet">好</button>
+    </div>
+  </div>
+</div>
+
+<script src="data.js?v=a2e22ecc"></script>
+<script src="app.js?v=b4e3d684"></script>
+</body>
+</html>
