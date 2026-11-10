@@ -501,6 +501,33 @@
       body.appendChild(more);
     }
 
+    /* 这张卡挂着的真题：只在最后一段显示，不打断阅读 */
+    if (seg.part === seg.parts) {
+      const links = (window.YYZ_LINK && window.YYZ_LINK.byCard[String(card.n)]) || [];
+      if (links.length) {
+        const qs = window.YYZ_Q ? window.YYZ_Q.q : [];
+        const map = {};
+        for (const q of qs) map[q.id] = q;
+        const ref = el('div', 'card-q-list');
+        ref.appendChild(el('span', 'cql-h', '做过这些真题 →'));
+        for (const id of links.slice(0, 6)) {
+          const q = map[id];
+          if (!q) continue;
+          const b = el('button', 'cql', id + ' ' + (q.k === 'single' ? '单' : q.k === 'multi' ? '多' : '析'));
+          b.title = q.s.slice(0, 60);
+          b.onclick = (ev) => {
+            ev.stopPropagation();
+            if (window.YYZ_EXAM && window.YYZ_EXAM.openQuestion) {
+              window.YYZ_EXAM.openQuestion(id);
+            }
+          };
+          ref.appendChild(b);
+        }
+        if (links.length > 6) ref.appendChild(el('span', 'cql-more', '等 ' + links.length + ' 题'));
+        body.appendChild(ref);
+      }
+    }
+
     /* recall interactions */
     if (state.mode === 'recall') {
       body.addEventListener('click', (e) => {
@@ -706,16 +733,33 @@
 
   function setMode(m) {
     state.mode = m;
+    document.body.classList.toggle('exam-mode', m === 'exam');
     $$('#modeTabs button').forEach((b) => b.classList.toggle('on', b.dataset.mode === m));
+    if (m === 'exam') {
+      renderExam();
+      return;
+    }
     refreshPlan();
     syncIdx();
     render();
+  }
+
+  function renderExam() {
+    if (window.YYZ_EXAM && window.YYZ_EXAM.render) window.YYZ_EXAM.render();
+  }
+
+  /* 从题库跳回某张知识卡 */
+  function gotoCard(n) {
+    state.curN = n;
+    writeJSON('yyz.last', n);
+    setMode('read');
   }
 
   let replanned = false;
   let resetMode = false;
 
   function render() {
+    if (state.mode === 'exam') { renderExam(); return; }
     if (state.mode === 'index') { renderIndex(); return; }
     renderCard();
 
@@ -911,22 +955,30 @@
         if (e.key === 'Escape') openSheet(false);
         return;
       }
+      // 题库模式自己处理方向键 / 回车
+      if (state.mode === 'exam') {
+        if (e.key === '4' || e.key === '3' || e.key === '1' || e.key === '2') {
+          // 交给下面的 switch，允许切回阅读
+        } else {
+          return;
+        }
+      }
 
       switch (e.key) {
         case 'ArrowRight':
         case 'j':
           e.preventDefault();
           if (state.mode === 'index') setMode('read');
-          else go(1);
+          else if (state.mode !== 'exam') go(1);
           break;
         case 'ArrowLeft':
         case 'k':
           e.preventDefault();
-          if (state.mode !== 'index') go(-1);
+          if (state.mode !== 'index' && state.mode !== 'exam') go(-1);
           break;
         case ' ':
           e.preventDefault();
-          if (state.mode !== 'index') go(1);
+          if (state.mode !== 'index' && state.mode !== 'exam') go(1);
           break;
         case '1':
           if (state.mode !== 'index') setMode('read');
@@ -936,6 +988,9 @@
           break;
         case '3':
           setMode('index');
+          break;
+        case '4':
+          setMode('exam');
           break;
         case 'r':
         case 'R':
@@ -950,7 +1005,7 @@
           }
           break;
         case '?':
-          toast('→/空格 下一张 · ← 上一张 · 1 顺序 · 2 遮色 · 3 目录 · A 全揭 · R 收起');
+          toast('→/空格 下一张 · ← 上一张 · 1 顺序 · 2 遮色 · 3 目录 · 4 题库 · A 全揭 · R 收起');
           break;
       }
     });
@@ -972,6 +1027,13 @@
     window.addEventListener('beforeunload', remember);
     window.addEventListener('pagehide', remember);
     setInterval(remember, 5000);
+
+    /* 给题库模块留的接口 */
+    window.YYZ_APP = {
+      setMode,
+      gotoCard,
+      mode: () => state.mode,
+    };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
