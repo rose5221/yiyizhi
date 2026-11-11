@@ -373,6 +373,11 @@
       art.appendChild(ref);
     }
 
+    // AI 答疑：每道题一份，历史跟着题目走
+    if (window.YYZ_AI) {
+      art.appendChild(window.YYZ_AI.panel(q, opts));
+    }
+
     if (opts.onNext) {
       const nav = el('div', 'q-nav');
       const p = el('button', 'nav-btn', '← 上一题');

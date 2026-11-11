@@ -13,7 +13,7 @@ import urllib.request
 
 import websocket  # websocket-client
 
-CDP = 'http://127.0.0.1:9444'
+CDP = 'http://127.0.0.1:9555'
 
 
 def new_tab(url):

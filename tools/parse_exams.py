@@ -21,13 +21,48 @@ import sys
 PAGE_RE = re.compile(r'\n<<<PAGE \d+>>>\n')
 PAGE_NO_RE = re.compile(r'^\s*\d{1,3}\s*$', re.M)   # 页眉页码单独一行
 
+# 页眉：可能独占一行，也可能粘在正文/选项末尾
+HEADER_INLINE = re.compile(
+    r'\s*思想政治理论试题\s*第\s*\d+\s*页\s*(?:[（(]\s*共\s*\d+\s*页\s*[）)])?'
+    r'|\s*第\s*\d+\s*页\s*[（(]\s*共\s*\d+\s*页\s*[）)]'
+    r'|\s*共\s*\d+\s*页\s*[）)]?'
+)
+
+# 页脚 / 卷首残留
+JUNK_INLINE = [
+    re.compile(r'绝密★启用前'),
+    re.compile(r'考生编号|考生姓名|报考单位'),
+    re.compile(r'请用黑色字迹签字笔|2B\s*铅笔'),
+    re.compile(r'超出答题区域|草稿纸|试题册上答题无效'),
+]
+
+# 数字后紧跟中文、且前面是中文的空格，多半是页码被拆出来夹在句中
+STRAY_NUM = re.compile(r'(?<=[\u4e00-\u9fff])\s(\d{1,3})\s(?=[\u4e00-\u9fff])')
+
 
 def clean(t):
     t = PAGE_RE.sub('\n', t)
     t = t.replace('\u3000', ' ')            # 全角空格
     t = t.replace('\xa0', ' ')
+    # 页码行必须在折叠空白之前删：否则它会被折进正文句子中间
+    t = re.sub(r'(?m)^\s*\d{1,3}\s*$', '', t)
+    # 行内页眉——常常粘在选项尾巴上
+    t = HEADER_INLINE.sub(' ', t)
+    for rx in JUNK_INLINE:
+        t = rx.sub(' ', t)
     t = re.sub(r'[ \t]+', ' ', t)
     return t
+
+
+def strip_inline_noise(s):
+    """题干/选项最后一道清洗：页眉、页脚、折行"""
+    s = HEADER_INLINE.sub(' ', s)
+    for rx in JUNK_INLINE:
+        s = rx.sub(' ', s)
+    # 中文排版里折行不产生空格：「这次」+「会议」= 「这次会议」
+    s = re.sub(r'\s*\n\s*', '', s)
+    s = re.sub(r'[ \t]+', ' ', s).strip()
+    return s
 
 
 def is_noise(line):
@@ -188,13 +223,13 @@ def parse_objective(block, n):
     for l in order:
         if l not in seen:
             seen.append(l)
-    final = [{'letter': l, 'text': re.sub(r'\s+', ' ', opts[l]).strip()}
-             for l in seen if opts.get(l, '').strip()]
+    final = [{'letter': l, 'text': strip_inline_noise(opts[l])}
+             for l in seen if strip_inline_noise(opts.get(l, '')).strip()]
 
     if len(final) < 4:
         return None
 
-    stem = re.sub(r'\s+', ' ', stem).strip()
+    stem = strip_inline_noise(stem)
     stem = re.sub(r'（\s*）\s*$', '', stem).strip()
     return {'kind': 'objective', 'stem': stem, 'options': final[:4]}
 
