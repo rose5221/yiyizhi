@@ -42,10 +42,11 @@
 
   const answers = readJSON(LS.ans) || {};
   const wrong = readJSON(LS.wrong) || {};
+  const wrongAt = readJSON('yyz.wrongAt.v1') || {};
   const quizPos = readJSON(LS.quiz) || {};
 
   function saveAnswers() { writeJSON(LS.ans, answers); }
-  function saveWrong() { writeJSON(LS.wrong, wrong); }
+  function saveWrong() { writeJSON(LS.wrong, wrong); writeJSON('yyz.wrongAt.v1', wrongAt); }
 
   const PART_NAME = {
     '马原': '马原',
@@ -94,7 +95,9 @@
 
     if (view.tab === 'papers') wrap.appendChild(renderPapers());
     else if (view.tab === 'bank') wrap.appendChild(renderBank());
+    else if (view.tab === 'drill') wrap.appendChild(renderDrill());
     else if (view.tab === 'wrong') wrap.appendChild(renderWrong());
+    else if (view.tab === 'stats') wrap.appendChild(renderStats());
     else if (view.tab === 'cards') wrap.appendChild(renderCards());
 
     host.appendChild(wrap);
@@ -108,7 +111,9 @@
     const defs = [
       ['papers', '套卷'],
       ['bank', '题库检索'],
+      ['drill', '错题重练'],
       ['wrong', '错题本'],
+      ['stats', '统计'],
       ['cards', '知识点回查'],
     ];
     for (const [k, label] of defs) {
@@ -195,7 +200,16 @@
         answers[q.id] = picked;
         saveAnswers();
         const ok = isRight(q, picked);
-        if (!ok) { wrong[q.id] = 1; } else { delete wrong[q.id]; }
+        if (!ok) {
+          wrong[q.id] = (wrong[q.id] || 0) + 1;
+          wrongAt[q.id] = Date.now();
+        } else {
+          // 答对了就把错误计数减一，减到 0 才从错题本移除
+          // （这样「错过一次但后来会了」不会一直占着错题本）
+          const left = (wrong[q.id] || 1) - 1;
+          if (left > 0) wrong[q.id] = left; else delete wrong[q.id];
+          if (!wrong[q.id]) delete wrongAt[q.id];
+        }
         saveWrong();
         view.revealed = true;
         quizPos[view.year] = view.i;
@@ -222,6 +236,13 @@
   }
 
   /* ---------------- 单题渲染 ---------------- */
+
+  function stat(v, label) {
+    const d = el('div', 'done-stat');
+    d.appendChild(el('b', null, String(v)));
+    d.appendChild(el('span', null, label));
+    return d;
+  }
 
   function isRight(q, picked) {
     if (!q.a) return false;
@@ -375,7 +396,9 @@
 
     // AI 答疑：每道题一份，历史跟着题目走
     if (window.YYZ_AI) {
-      art.appendChild(window.YYZ_AI.panel(q, opts));
+      art.appendChild(window.YYZ_AI.panel(q, {
+        hideAnswer: !!opts.drillMode && !opts.showAnswer,
+      }));
     }
 
     if (opts.onNext) {
@@ -488,6 +511,9 @@
     head.appendChild(el('span', null, ids.length + ' 题'));
 
     if (ids.length) {
+      const toDrill = el('button', 'nav-btn primary', '去重练 →');
+      toDrill.onclick = () => { view.tab = 'drill'; drill.started = false; render(); };
+      head.appendChild(toDrill);
       const exp = el('button', 'nav-btn', '导出为文本');
       exp.onclick = () => exportWrong(ids);
       head.appendChild(exp);
@@ -514,7 +540,8 @@
       b.appendChild(el('span', 'rid', q.id));
       b.appendChild(el('span', 'rk', q.k === 'single' ? '单' : q.k === 'multi' ? '多' : '析'));
       b.appendChild(el('span', 'rs', q.s.slice(0, 90)));
-      b.appendChild(el('span', 'rbadge no', '✕'));
+      const n = wrong[q.id] || 1;
+      b.appendChild(el('span', 'rbadge no', n > 1 ? '✕' + n : '✕'));
       b.onclick = () => {
         view.year = q.y;
         const l = Q.filter((x) => x.y === q.y).sort((a, c) => a.n - c.n);
@@ -560,6 +587,308 @@
         toast('已复制到剪贴板');
       }
     );
+  }
+
+
+  /* ---------------- 错题重练 ---------------- */
+
+  // 重练会话：把错题按「错得最多 + 最近错的」排队，一次过一轮
+  // 和「错题本」的区别：错题本是列表，重练是一条流水线，做完一题立刻下一题，
+  // 答对了就把它从队列里放走，形成闭环。
+  const drill = { queue: [], pos: 0, done: 0, right: 0, started: false };
+
+  function buildDrillQueue() {
+    const ids = Object.keys(wrong).filter((id) => BY_ID[id]);
+    ids.sort((a, b) => {
+      const ca = wrong[a] || 1, cb = wrong[b] || 1;
+      if (cb !== ca) return cb - ca;              // 错得多的排前面
+      return (wrongAt[b] || 0) - (wrongAt[a] || 0); // 再按最近错的时间
+    });
+    return ids;
+  }
+
+  function renderDrill() {
+    const box = el('div', 'drill');
+
+    if (!drill.started) {
+      const queue = buildDrillQueue();
+      const head = el('div', 'drill-head');
+      head.appendChild(el('h2', null, '错题重练'));
+      box.appendChild(head);
+
+      if (!queue.length) {
+        box.appendChild(el('div', 'empty',
+          '还没有错题。先去套卷里做几道，错的会自动进来。'));
+        return box;
+      }
+
+      const intro = el('div', 'drill-intro');
+      intro.appendChild(el('div', 'drill-n', queue.length + ' 道错题'));
+      intro.appendChild(el('div', 'drill-t',
+        '按错得最多的排前面。答对一次就从队列里放走；再错就留在队尾。'));
+
+      const byPart = {};
+      for (const id of queue) {
+        const p = BY_ID[id].p || '其他';
+        byPart[p] = (byPart[p] || 0) + 1;
+      }
+      const chips = el('div', 'drill-parts');
+      for (const [p, n] of Object.entries(byPart)) {
+        chips.appendChild(el('span', 'drill-part', p + ' ' + n));
+      }
+      intro.appendChild(chips);
+      box.appendChild(intro);
+
+      const go = el('button', 'nav-btn primary drill-go', '开始重练 →');
+      go.onclick = () => {
+        drill.queue = queue.slice();
+        drill.pos = 0;
+        drill.done = 0;
+        drill.right = 0;
+        drill.started = true;
+        render();
+      };
+      box.appendChild(go);
+      return box;
+    }
+
+    // 进行中
+    if (drill.pos >= drill.queue.length) {
+      const fin = el('div', 'drill-fin');
+      fin.appendChild(el('div', 'drill-fin-k', '这一轮过完了'));
+      const st = el('div', 'drill-fin-stats');
+      st.appendChild(stat(drill.done, '做了'));
+      st.appendChild(stat(drill.right, '答对'));
+      st.appendChild(stat(drill.done - drill.right, '还错'));
+      fin.appendChild(st);
+      const again = el('button', 'nav-btn primary', '再来一轮');
+      again.onclick = () => { drill.started = false; render(); };
+      fin.appendChild(again);
+      box.appendChild(fin);
+      return box;
+    }
+
+    const id = drill.queue[drill.pos];
+    const q = BY_ID[id];
+
+    const bar = el('div', 'drill-bar');
+    bar.appendChild(el('span', 'drill-pos',
+      (drill.pos + 1) + ' / ' + drill.queue.length));
+    const prog = el('span', 'drill-prog');
+    const fill = el('i');
+    fill.style.width = (drill.pos / drill.queue.length * 100).toFixed(0) + '%';
+    prog.appendChild(fill);
+    bar.appendChild(prog);
+    const wrongN = wrong[id] || 1;
+    if (wrongN > 1) bar.appendChild(el('span', 'drill-miss', '错过 ' + wrongN + ' 次'));
+    box.appendChild(bar);
+
+    const quit = el('button', 'drill-quit', '退出重练');
+    quit.onclick = () => { drill.started = false; render(); };
+    box.appendChild(quit);
+
+    // 重练时默认不显示答案；答完才显示
+    if (view.pickFor !== q.id) {
+      view.pick = [];
+      view.pickFor = q.id;
+      view.revealed = false;
+    }
+
+    box.appendChild(renderQuestion(q, {
+      showAnswer: view.revealed,
+      onSubmit: (picked) => {
+        answers[q.id] = picked;
+        saveAnswers();
+        const ok = isRight(q, picked);
+        if (ok) {
+          const left = (wrong[q.id] || 1) - 1;
+          if (left > 0) wrong[q.id] = left; else delete wrong[q.id];
+          drill.right++;
+          toast('✓ 对了，这题放走');
+        } else {
+          wrong[q.id] = (wrong[q.id] || 0) + 1;
+          wrongAt[q.id] = Date.now();
+          // 再错的放回队尾，本轮里再碰一次
+          drill.queue.push(q.id);
+          toast('✕ 又错了，排到队尾再来');
+        }
+        saveWrong();
+        drill.done++;
+        view.revealed = true;
+        render();
+      },
+      onNext: () => {
+        drill.pos++;
+        view.pick = [];
+        view.pickFor = null;
+        view.revealed = false;
+        render();
+      },
+      onPrev: () => {
+        if (drill.pos > 0) {
+          drill.pos--;
+          view.pick = [];
+          view.pickFor = null;
+          view.revealed = false;
+          render();
+        }
+      },
+      onJumpCard: (n) => jumpToCard(n),
+      drillMode: true,
+    }));
+    return box;
+  }
+
+  /* ---------------- 统计 ---------------- */
+
+  function renderStats() {
+    const box = el('div', 'stats');
+
+    const head = el('div', 'stats-head');
+    head.appendChild(el('h2', null, '做题统计'));
+    box.appendChild(head);
+
+    const answered = Q.filter((q) => answers[q.id]);
+    if (!answered.length) {
+      box.appendChild(el('div', 'empty', '还没做过题。去套卷里做一套，这里就有数了。'));
+      return box;
+    }
+
+    // 总览
+    const objAns = answered.filter((q) => q.k !== 'essay');
+    const objRight = objAns.filter((q) => isRight(q, answers[q.id]));
+    const acc = objAns.length ? Math.round(objRight.length / objAns.length * 100) : 0;
+
+    const overview = el('div', 'stats-overview');
+    overview.appendChild(stat(answered.length, '做过'));
+    overview.appendChild(stat(objRight.length, '答对'));
+    overview.appendChild(stat(acc + '%', '正确率'));
+    overview.appendChild(stat(Object.keys(wrong).length, '待消灭'));
+    box.appendChild(overview);
+
+    // 按年份
+    const byYear = {};
+    for (const q of Q) {
+      if (!answers[q.id] || q.k === 'essay') continue;
+      const y = q.y;
+      byYear[y] = byYear[y] || { n: 0, ok: 0, total: Q.filter((x) => x.y === y && x.k !== 'essay').length };
+      byYear[y].n++;
+      if (isRight(q, answers[q.id])) byYear[y].ok++;
+    }
+    const years = Object.keys(byYear).map(Number).sort((a, b) => b - a);
+    if (years.length) {
+      const sec = el('section', 'stats-sec');
+      sec.appendChild(el('h3', null, '按年份'));
+      const rows = el('div', 'stats-rows');
+      for (const y of years) {
+        const d = byYear[y];
+        const pct = Math.round(d.ok / d.n * 100);
+        const row = el('div', 'stats-row');
+        row.appendChild(el('span', 'sr-k', String(y)));
+        const bar = el('span', 'sr-bar');
+        const fill = el('i');
+        fill.style.width = pct + '%';
+        fill.className = pct >= 70 ? 'good' : pct >= 40 ? 'mid' : 'bad';
+        bar.appendChild(fill);
+        row.appendChild(bar);
+        row.appendChild(el('span', 'sr-v', d.ok + '/' + d.n + ' · ' + pct + '%'));
+        rows.appendChild(row);
+      }
+      sec.appendChild(rows);
+      box.appendChild(sec);
+    }
+
+    // 按学科
+    const byPart = {};
+    for (const q of Q) {
+      if (!answers[q.id] || q.k === 'essay') continue;
+      const p = q.p || '其他';
+      byPart[p] = byPart[p] || { n: 0, ok: 0 };
+      byPart[p].n++;
+      if (isRight(q, answers[q.id])) byPart[p].ok++;
+    }
+    const parts = Object.entries(byPart).sort((a, b) => (a[1].ok / a[1].n) - (b[1].ok / b[1].n));
+    if (parts.length) {
+      const sec = el('section', 'stats-sec');
+      sec.appendChild(el('h3', null, '按学科（弱的排前面）'));
+      const rows = el('div', 'stats-rows');
+      for (const [p, d] of parts) {
+        const pct = Math.round(d.ok / d.n * 100);
+        const row = el('div', 'stats-row');
+        row.appendChild(el('span', 'sr-k', p));
+        const bar = el('span', 'sr-bar');
+        const fill = el('i');
+        fill.style.width = pct + '%';
+        fill.className = pct >= 70 ? 'good' : pct >= 40 ? 'mid' : 'bad';
+        bar.appendChild(fill);
+        row.appendChild(bar);
+        row.appendChild(el('span', 'sr-v', d.ok + '/' + d.n + ' · ' + pct + '%'));
+        rows.appendChild(row);
+      }
+      sec.appendChild(rows);
+      box.appendChild(sec);
+    }
+
+    // 弱项：错过没消灭的，按卡归组
+    const weakIds = Object.keys(wrong).filter((id) => BY_ID[id]);
+    if (weakIds.length) {
+      const sec = el('section', 'stats-sec');
+      sec.appendChild(el('h3', null, '最该补的 ' + Math.min(6, weakIds.length) + ' 道'));
+
+      const tallied = {};
+      for (const id of weakIds) {
+        for (const it of (LINK.byQuestion[id] || [])) {
+          tallied[it.card] = (tallied[it.card] || 0) + 1;
+        }
+      }
+      const top = Object.entries(tallied).sort((a, b) => b[1] - a[1]).slice(0, 6);
+      const cardsWrap = el('div', 'stats-cards');
+
+      for (const [n, cnt] of top) {
+        const card = (window.YYZ_DATA.cards || []).find((c) => c.n === +n);
+        if (!card) continue;
+        const b = el('button', 'stats-card');
+        b.appendChild(el('b', null, '卡 ' + String(n).padStart(3, '0')));
+        b.appendChild(el('span', 'sc-t', card.t));
+        b.appendChild(el('span', 'sc-n', cnt + ' 道错题'));
+        b.onclick = () => jumpToCard(+n);
+        cardsWrap.appendChild(b);
+      }
+
+      // 错题不一定挂在卡上（这本册子覆盖不到毛中特/时政），
+      // 那就直接把题列出来，别留个空标题
+      if (!cardsWrap.children.length) {
+        const sorted = weakIds
+          .slice()
+          .sort((a, b) => (wrong[b] || 1) - (wrong[a] || 1));
+        for (const id of sorted.slice(0, 6)) {
+          const q = BY_ID[id];
+          const b = el('button', 'stats-card');
+          b.appendChild(el('b', null, q.id));
+          b.appendChild(el('span', 'sc-t', q.s.slice(0, 34)));
+          b.appendChild(el('span', 'sc-n', '错 ' + (wrong[id] || 1) + ' 次'));
+          b.onclick = () => {
+            const l = Q.filter((x) => x.y === q.y).sort((x, y2) => x.n - y2.n);
+            view.year = q.y;
+            view.i = l.findIndex((x) => x.id === id);
+            view.revealed = true;
+            view.tab = 'papers';
+            render();
+          };
+          cardsWrap.appendChild(b);
+        }
+        sec.appendChild(cardsWrap);
+        sec.appendChild(el('div', 'stats-tip',
+          '这些题还没挂到知识卡（手册不覆盖的部分），点开直接看解析。'));
+      } else {
+        sec.appendChild(cardsWrap);
+        sec.appendChild(el('div', 'stats-tip', '这些卡下的错题最多，优先回去看一遍。'));
+      }
+
+      box.appendChild(sec);
+    }
+
+    return box;
   }
 
   /* ---------------- 知识点回查 ---------------- */
@@ -669,7 +998,13 @@
       if (view.pick.length) {
         answers[q.id] = view.pick.slice();
         saveAnswers();
-        if (isRight(q, view.pick)) delete wrong[q.id]; else wrong[q.id] = 1;
+        if (isRight(q, view.pick)) {
+          const left = (wrong[q.id] || 1) - 1;
+          if (left > 0) wrong[q.id] = left; else delete wrong[q.id];
+        } else {
+          wrong[q.id] = (wrong[q.id] || 0) + 1;
+          wrongAt[q.id] = Date.now();
+        }
         saveWrong();
         view.revealed = true;
         render();

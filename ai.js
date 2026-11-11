@@ -37,29 +37,43 @@
 
   /* ---------------- 系统提示词 ---------------- */
 
-  function sysFor(q) {
+  function sysFor(q, opts) {
+    opts = opts || {};
     const kind = q.k === 'single' ? '单选' : q.k === 'multi' ? '多选' : '分析题';
-    const opts = (q.o || []).map((o) => o.l + '. ' + o.t).join('\n');
     let s = '你是一位考研政治（全国硕士研究生招生考试 101 思想政治理论）的辅导老师。'
-      + '学生正在做一道真题，你可以看到题干、选项和标准答案。\n\n'
+      + (opts.hideAnswer
+        ? '学生正在重练一道真题，你只能看到题干和选项，也没有答案。\n\n'
+        : '学生正在做一道真题，你可以看到题干、选项和标准答案。\n\n')
       + '回答要求：\n'
       + '1. 直接讲清楚这个知识点，不要复述题干。\n'
       + '2. 学生问「为什么错」时，要指出他那个选项具体错在哪一处表述。\n'
       + '3. 涉及史纲要给出准确年份和会议，不要含糊。\n'
       + '4. 不编造。不确定就说不确定。\n'
-      + '5. 简洁，控制在 200 字以内，除非学生要求展开。\n\n'
+      + '5. 简洁，控制在 200 字以内，除非学生要求展开。\n'
+      + '6. 学生如果提到别的题号（比如「第 27 题」），而那不是当前这道题，'
+      + '就直接说你看不到那道题，让他把题干发过来或切到那道题再问。不要瞎编。\n\n'
       + '【当前题目】\n'
       + q.id + '（' + kind + '，' + (q.p || '') + '）\n'
       + '题干：' + q.s + '\n';
-    if (opts) s += '选项：\n' + opts + '\n';
+    const optText = (q.o || []).map((o) => o.l + '. ' + o.t).join('\n');
+    if (optText) s += '选项：\n' + optText + '\n';
     if (q.q && q.q.length) s += '设问：\n' + q.q.join('\n') + '\n';
+
+    if (opts.hideAnswer) {
+      s = s.replace('5. 简洁，控制在 200 字以内，除非学生要求展开。\n',
+        '5. 简洁，控制在 200 字以内，除非学生要求展开。\n'
+        + '6. **学生正在重练这道题，还没作答。绝对不要说出正确答案是哪个字母，'
+        + '也不要说「选 X」。只讲知识点、讲每个选项的判别依据，让他自己想。**\n');
+      return s;
+    }
     if (q.a) s += '标准答案：' + q.a + '\n';
     return s;
   }
 
   /* ---------------- 面板 ---------------- */
 
-  function makePanel(q, opts) {
+  function makePanel(q, panelOpts) {
+    panelOpts = panelOpts || {};
     const box = el('div', 'ai-panel');
 
     const head = el('div', 'ai-head');
@@ -94,9 +108,12 @@
 
       if (!msgs.length) {
         const quick = el('div', 'ai-quick');
-        const presets = q.k === 'essay'
-          ? ['这题考的是什么原理', '答题框架怎么搭', '帮我拆一下设问']
-          : ['这道题考什么知识点', '帮我辨析这几个选项', '为什么是这个答案', '帮我记这个考点'];
+        const presets = panelOpts.hideAnswer
+          ? ['这题考什么知识点', '帮我辨析这几个选项', '相关考点怎么记']
+          : q.k === 'essay'
+            ? ['这题考的是什么原理', '答题框架怎么搭', '帮我拆一下设问']
+            : ['这道题考什么知识点', '帮我辨析这几个选项', '为什么是这个答案', '帮我记这个考点'];
+        // 重练时不要「为什么是这个答案」——那会直接泄底
         for (const p of presets) {
           const b = el('button', 'ai-chip', p);
           b.onclick = () => ask(p);
@@ -165,7 +182,7 @@
       body.scrollTop = body.scrollHeight;
 
       try {
-        const reply = await call(text, q);
+        const reply = await call(text, q, panelOpts);
         hist[q.id].push({ role: 'assistant', content: reply });
         saveHist();
         renderBody();
@@ -191,8 +208,8 @@
 
   /* ---------------- 调 API ---------------- */
 
-  async function call(text, q) {
-    const msgs = [{ role: 'system', content: sysFor(q) }];
+  async function call(text, q, opts) {
+    const msgs = [{ role: 'system', content: sysFor(q, opts) }];
     for (const m of (hist[q.id] || [])) msgs.push(m);
 
     const url = 'https://api.deepseek.com/chat/completions';
